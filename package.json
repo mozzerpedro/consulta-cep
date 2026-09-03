@@ -9,9 +9,10 @@
     "dev": "node --watch src/server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.12"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "redis": "^6.2.1"
   }
 }

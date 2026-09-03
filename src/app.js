@@ -1,6 +1,7 @@
 import express from 'express';
 import { cepRoutes } from './routes/cep.routes.js';
 import { errorHandler, notFoundHandler } from './lib/errorHandler.js';
+import { redisStatus } from './lib/redis.js';
 
 export function createApp() {
   const app = express();
@@ -8,7 +9,7 @@ export function createApp() {
   app.use(express.json());
 
   app.get('/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
+    res.json({ status: 'ok', uptime: process.uptime(), redis: redisStatus() });
   });
 
   app.use('/cep', cepRoutes);

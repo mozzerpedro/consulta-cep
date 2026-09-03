@@ -1,6 +1,14 @@
 import { AppError } from '../lib/AppError.js';
 import { formatCep, isValidCep, sanitizeCep } from '../lib/cep.js';
+import { cacheDel, cacheGet, cacheSet } from '../lib/redis.js';
 import { fetchCepFromViaCep } from './viacep.service.js';
+
+const CACHE_PREFIX = process.env.REDIS_KEY_PREFIX ?? 'cep:';
+
+/** "80010010" -> "cep:80010010" */
+export function cacheKey(cep) {
+  return `${CACHE_PREFIX}${cep}`;
+}
 
 /** String vazia ou só espaços vira null. */
 function orNull(value) {
@@ -29,7 +37,13 @@ export function toEndereco(raw) {
 
 /**
  * Consulta um CEP e devolve o endereço já normalizado.
+ *
+ * O cache guarda o payload cru do ViaCEP, não o endereço normalizado: assim,
+ * se o contrato da nossa API mudar, `toEndereco` passa a valer para os dados
+ * já cacheados sem precisar invalidar nada.
+ *
  * @param {string} input CEP com ou sem máscara
+ * @returns {Promise<{ endereco: object, origem: 'cache' | 'viacep' }>}
  */
 export async function consultarCep(input) {
   const cep = sanitizeCep(input);
@@ -38,6 +52,31 @@ export async function consultarCep(input) {
     throw new AppError(400, 'invalid_cep', 'O CEP deve conter 8 dígitos numéricos.');
   }
 
+  const cached = await cacheGet(cacheKey(cep));
+  if (cached) {
+    return { endereco: toEndereco(cached), origem: 'cache' };
+  }
+
   const raw = await fetchCepFromViaCep(cep);
-  return toEndereco(raw);
+
+  // Endereço de CEP praticamente não muda, então gravamos sem TTL.
+  // A escrita não bloqueia a resposta nem derruba a request se o Redis falhar.
+  cacheSet(cacheKey(cep), raw);
+
+  return { endereco: toEndereco(raw), origem: 'viacep' };
+}
+
+/**
+ * Remove um CEP do cache — útil quando o ViaCEP corrige algum endereço.
+ * @param {string} input CEP com ou sem máscara
+ */
+export async function invalidarCep(input) {
+  const cep = sanitizeCep(input);
+
+  if (!isValidCep(cep)) {
+    throw new AppError(400, 'invalid_cep', 'O CEP deve conter 8 dígitos numéricos.');
+  }
+
+  const removido = await cacheDel(cacheKey(cep));
+  return { cep, removido };
 }
