@@ -33,6 +33,7 @@ Variáveis de ambiente (todas opcionais, ver `.env.example`):
 | `REDIS_ENABLED`     | `true`                     | `false` desliga o cache por completo  |
 | `REDIS_KEY_PREFIX`  | `cep:`                     | Prefixo das chaves                    |
 | `REDIS_TIMEOUT_MS`  | `1000`                     | Teto de espera por operação de cache  |
+| `REDIS_TTL_SECONDS` | `86400`                    | Validade de cada CEP no cache (24h)   |
 
 ## Cache
 
@@ -44,8 +45,10 @@ rede externa.
 - **Valor:** o payload **cru** do ViaCEP, não o endereço já normalizado. Assim,
   se o contrato da nossa API mudar, `toEndereco` passa a valer também para o que
   já está cacheado, sem precisar limpar nada.
-- **Sem TTL:** endereço de CEP praticamente não muda, então a entrada fica até
-  ser removida explicitamente (`DELETE /cep/:cep`).
+- **TTL de 24h:** endereço de CEP muda pouco, mas não nunca. Expirando em um
+  dia, uma correção dos Correios entra sozinha no dia seguinte, sem depender de
+  alguém lembrar de invalidar a chave. Ajustável por `REDIS_TTL_SECONDS`; `0`
+  desliga a expiração e a entrada passa a viver até ser removida na mão.
 - **Só sucesso é cacheado:** 404 (CEP inexistente) e erros do ViaCEP não entram
   no cache — CEPs novos são criados de tempos em tempos, e gravá-los como
   inexistentes para sempre seria irreversível na prática.
@@ -123,8 +126,8 @@ renomeado para `cidade` e os campos internos dos Correios (`gia`, `siafi`,
 
 ### `DELETE /cep/:cep`
 
-Invalida a entrada do cache — útil quando o ViaCEP corrige um endereço. Como não
-há TTL, esta é a forma de forçar uma releitura.
+Invalida a entrada do cache — a forma de forçar uma releitura antes de o TTL de
+24h expirar, quando você já sabe que o ViaCEP corrigiu o endereço.
 
 ```json
 { "data": { "cep": "80010010", "removido": true } }

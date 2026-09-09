@@ -5,6 +5,9 @@ import { fetchCepFromViaCep } from './viacep.service.js';
 
 const CACHE_PREFIX = process.env.REDIS_KEY_PREFIX ?? 'cep:';
 
+/** 24 horas. Endereço de CEP muda pouco, mas não nunca. */
+const CACHE_TTL_SECONDS = Number(process.env.REDIS_TTL_SECONDS ?? 86400);
+
 /** "80010010" -> "cep:80010010" */
 export function cacheKey(cep) {
   return `${CACHE_PREFIX}${cep}`;
@@ -40,7 +43,8 @@ export function toEndereco(raw) {
  *
  * O cache guarda o payload cru do ViaCEP, não o endereço normalizado: assim,
  * se o contrato da nossa API mudar, `toEndereco` passa a valer para os dados
- * já cacheados sem precisar invalidar nada.
+ * já cacheados sem precisar invalidar nada. Cada entrada expira em
+ * `REDIS_TTL_SECONDS` (24h por padrão).
  *
  * @param {string} input CEP com ou sem máscara
  * @returns {Promise<{ endereco: object, origem: 'cache' | 'viacep' }>}
@@ -59,15 +63,16 @@ export async function consultarCep(input) {
 
   const raw = await fetchCepFromViaCep(cep);
 
-  // Endereço de CEP praticamente não muda, então gravamos sem TTL.
+  // Expira em 24h: correções dos Correios entram sozinhas no dia seguinte,
+  // sem depender de alguém lembrar de invalidar a chave na mão.
   // A escrita não bloqueia a resposta nem derruba a request se o Redis falhar.
-  cacheSet(cacheKey(cep), raw);
+  cacheSet(cacheKey(cep), raw, CACHE_TTL_SECONDS);
 
   return { endereco: toEndereco(raw), origem: 'viacep' };
 }
 
 /**
- * Remove um CEP do cache — útil quando o ViaCEP corrige algum endereço.
+ * Remove um CEP do cache, forçando a releitura antes do TTL expirar.
  * @param {string} input CEP com ou sem máscara
  */
 export async function invalidarCep(input) {

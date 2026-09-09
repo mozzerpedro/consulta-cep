@@ -109,16 +109,23 @@ export async function cacheGet(key) {
 }
 
 /**
- * Grava um valor serializado. Sem TTL: o dado fica até ser removido explicitamente.
+ * Grava um valor serializado, com expiração opcional.
  * @param {string} key
  * @param {unknown} value
+ * @param {number} [ttlSeconds] segundos até expirar; omitido ou <= 0 grava sem TTL
  */
-export async function cacheSet(key, value) {
+export async function cacheSet(key, value, ttlSeconds) {
   try {
     const redis = await getRedis();
     if (!redis) return false;
 
-    const result = await withTimeout(redis.set(key, JSON.stringify(value)));
+    // `EX` direto está deprecado no node-redis 6 — a forma atual é `expiration`.
+    const options =
+      Number.isFinite(ttlSeconds) && ttlSeconds > 0
+        ? { expiration: { type: 'EX', value: Math.floor(ttlSeconds) } }
+        : undefined;
+
+    const result = await withTimeout(redis.set(key, JSON.stringify(value), options));
     if (result === TIMED_OUT || result instanceof Error) {
       logOnce('falha ao gravar no cache', result === TIMED_OUT ? new Error('timeout') : result);
       return false;
