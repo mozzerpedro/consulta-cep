@@ -4,17 +4,15 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
 const REDIS_ENABLED = (process.env.REDIS_ENABLED ?? 'true') !== 'false';
 const OP_TIMEOUT_MS = Number(process.env.REDIS_TIMEOUT_MS ?? 1000);
 
+// O cache é um acelerador, não uma dependência: se o Redis cair, a API continua
+// respondendo pelo ViaCEP. Por isso todo erro deste módulo vira log, não exceção.
+
 /** @type {import('redis').RedisClientType | null} */
 let client = null;
 /** @type {Promise<unknown> | null} */
 let connecting = null;
 let lastErrorLogged = null;
 
-/**
- * O cache é um acelerador, não uma dependência: se o Redis cair, a API
- * continua respondendo pelo ViaCEP. Por isso todo erro daqui é engolido
- * (logado uma vez por mensagem) em vez de virar exceção.
- */
 function logOnce(message, error) {
   const key = `${message}:${error?.message ?? ''}`;
   if (key === lastErrorLogged) return;
@@ -24,10 +22,7 @@ function logOnce(message, error) {
 
 const TIMED_OUT = Symbol('timeout');
 
-/**
- * Corre a promise contra um timer. Nenhuma operação de cache pode segurar
- * a request: se o Redis demorar, seguimos direto para o ViaCEP.
- */
+/** Nenhuma operação de cache pode segurar a request além de `ms`. */
 function withTimeout(promise, ms = OP_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(TIMED_OUT), ms);
@@ -43,8 +38,7 @@ function buildClient() {
   const instance = createClient({
     url: REDIS_URL,
     socket: {
-      // Backoff crescente até 5s, sem desistir: assim que o Redis voltar,
-      // o cache volta sozinho, sem reiniciar a API.
+      // Sem desistir: assim que o Redis voltar, o cache volta sozinho.
       reconnectStrategy: (retries) => Math.min(retries * 200, 5000),
     },
   });
@@ -59,10 +53,7 @@ function buildClient() {
   return instance;
 }
 
-/**
- * Devolve o client pronto ou `null` quando o Redis está desligado, indisponível
- * ou ainda conectando. A conexão é preguiçosa e a espera é limitada.
- */
+/** Client pronto, ou `null` se o Redis está desligado, fora ou ainda conectando. */
 export async function getRedis() {
   if (!REDIS_ENABLED) return null;
 
@@ -70,8 +61,8 @@ export async function getRedis() {
   if (client.isReady) return client;
 
   if (!connecting) {
-    // Socket já aberto sem `connecting` = reconexão automática em andamento;
-    // chamar connect() de novo lançaria "Socket already opened".
+    // Socket já aberto sem `connecting` = reconexão em andamento; chamar
+    // connect() de novo lançaria "Socket already opened".
     if (client.isOpen) return null;
 
     // connect() com reconnectStrategy infinita pode nunca resolver — por isso
@@ -85,11 +76,7 @@ export async function getRedis() {
   return client.isReady ? client : null;
 }
 
-/**
- * Lê e desserializa uma chave. Devolve `null` em qualquer falha
- * (miss, Redis fora, timeout ou JSON corrompido).
- * @param {string} key
- */
+/** Devolve `null` em qualquer falha: miss, Redis fora, timeout ou JSON corrompido. */
 export async function cacheGet(key) {
   try {
     const redis = await getRedis();
@@ -108,12 +95,7 @@ export async function cacheGet(key) {
   }
 }
 
-/**
- * Grava um valor serializado, com expiração opcional.
- * @param {string} key
- * @param {unknown} value
- * @param {number} [ttlSeconds] segundos até expirar; omitido ou <= 0 grava sem TTL
- */
+/** `ttlSeconds` omitido ou <= 0 grava sem expiração. */
 export async function cacheSet(key, value, ttlSeconds) {
   try {
     const redis = await getRedis();
@@ -138,10 +120,6 @@ export async function cacheSet(key, value, ttlSeconds) {
   }
 }
 
-/**
- * Remove uma chave do cache.
- * @param {string} key
- */
 export async function cacheDel(key) {
   try {
     const redis = await getRedis();
@@ -160,14 +138,12 @@ export async function cacheDel(key) {
   }
 }
 
-/** Status do cache para o /health. */
 export function redisStatus() {
   if (!REDIS_ENABLED) return 'disabled';
   if (client?.isReady) return 'ready';
   return 'unavailable';
 }
 
-/** Encerra a conexão no shutdown do servidor. */
 export async function closeRedis() {
   if (!client) return;
   try {

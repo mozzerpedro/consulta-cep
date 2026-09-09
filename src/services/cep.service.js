@@ -41,10 +41,9 @@ export function toEndereco(raw) {
 /**
  * Consulta um CEP e devolve o endereço já normalizado.
  *
- * O cache guarda o payload cru do ViaCEP, não o endereço normalizado: assim,
- * se o contrato da nossa API mudar, `toEndereco` passa a valer para os dados
- * já cacheados sem precisar invalidar nada. Cada entrada expira em
- * `REDIS_TTL_SECONDS` (24h por padrão).
+ * O cache guarda o payload cru do ViaCEP, não o endereço normalizado: assim, se
+ * o contrato da nossa API mudar, `toEndereco` passa a valer também para o que já
+ * está cacheado, sem precisar invalidar nada.
  *
  * @param {string} input CEP com ou sem máscara
  * @returns {Promise<{ endereco: object, origem: 'cache' | 'viacep' }>}
@@ -63,9 +62,7 @@ export async function consultarCep(input) {
 
   const raw = await fetchCepFromViaCep(cep);
 
-  // Expira em 24h: correções dos Correios entram sozinhas no dia seguinte,
-  // sem depender de alguém lembrar de invalidar a chave na mão.
-  // A escrita não bloqueia a resposta nem derruba a request se o Redis falhar.
+  // Sem await: a gravação não bloqueia a resposta.
   cacheSet(cacheKey(cep), raw, CACHE_TTL_SECONDS);
 
   return { endereco: toEndereco(raw), origem: 'viacep' };

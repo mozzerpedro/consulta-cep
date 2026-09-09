@@ -7,7 +7,6 @@ cepRoutes.get('/:cep', async (req, res, next) => {
   try {
     const { endereco, origem } = await consultarCep(req.params.cep);
 
-    // Header informativo: dá para conferir se o cache pegou sem mudar o corpo.
     res.set('X-Cache', origem === 'cache' ? 'HIT' : 'MISS');
     res.json({ data: endereco });
   } catch (error) {

@@ -8,8 +8,7 @@ const server = createApp().listen(PORT, '0.0.0.0', () => {
   console.log(`API de CEP rodando em http://localhost:${PORT}`);
 });
 
-// Aquece a conexão no boot para a primeira request não pagar o handshake.
-// Falha aqui não impede o servidor de subir: o cache é opcional.
+// Aquece a conexão para a primeira request não pagar o handshake.
 getRedis();
 
 for (const sinal of ['SIGINT', 'SIGTERM']) {
