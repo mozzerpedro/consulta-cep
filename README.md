@@ -75,6 +75,7 @@ consulta-cep/
 ├── .gitignore
 ├── package.json
 ├── README.md
+├── test/                       # suíte com node:test
 └── src/
     ├── server.js               # entrypoint: carrega env, sobe o servidor, trata shutdown
     ├── app.js                  # monta o Express (rotas + middlewares)
@@ -162,6 +163,28 @@ Todo erro segue o mesmo formato:
 | 500    | `internal_error`       | Qualquer erro não previsto          |
 
 Falha no Redis nunca vira erro para o cliente.
+
+## Testes
+
+```bash
+npm test          # roda a suíte
+npm run test:watch
+```
+
+Usam o `node:test` embutido — nenhuma dependência de teste. Nada de rede real:
+o ViaCEP e o Redis são substituídos por servidores fake em `test/helpers/`, que
+falam o protocolo de verdade, então o código exercitado é o mesmo de produção.
+
+| Arquivo                     | Cobre                                              |
+| --------------------------- | -------------------------------------------------- |
+| `cep.test.js`               | sanitizar / validar / formatar e o `toEndereco`     |
+| `viacep.service.test.js`    | cada erro do upstream: 404, 400, 502, 504, JSON ruim |
+| `cep.service.test.js`       | MISS → HIT, TTL de 24h, invalidação, payload cru    |
+| `cache-offline.test.js`     | Redis fora: a API continua respondendo              |
+
+Os módulos leem `process.env` no topo, então os testes montam o ambiente e usam
+`import()` dinâmico. Cada arquivo roda em processo próprio, o que permite a um
+deles apontar para um Redis inexistente sem afetar os outros.
 
 ## Testando
 

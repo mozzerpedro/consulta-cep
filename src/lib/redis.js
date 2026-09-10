@@ -146,11 +146,15 @@ export function redisStatus() {
 
 export async function closeRedis() {
   if (!client) return;
+
+  const instancia = client;
+  client = null;
+  connecting = null;
+
   try {
-    if (client.isOpen) await withTimeout(client.quit());
+    if (instancia.isOpen) await withTimeout(instancia.quit());
   } finally {
-    client.destroy?.();
-    client = null;
-    connecting = null;
+    // destroy() lança se o client já fechou, então só serve se o quit falhou.
+    if (instancia.isOpen) instancia.destroy();
   }
 }
