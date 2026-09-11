@@ -6,12 +6,17 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:watch": "node --test --watch \"test/**/*.test.js\""
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.12"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "cors": "^2.8.6",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.7.0",
+    "redis": "^6.2.1"
   }
 }
