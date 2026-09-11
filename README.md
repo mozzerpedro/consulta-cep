@@ -34,6 +34,10 @@ Variáveis de ambiente (todas opcionais, ver `.env.example`):
 | `REDIS_KEY_PREFIX`  | `cep:`                     | Prefixo das chaves                    |
 | `REDIS_TIMEOUT_MS`  | `1000`                     | Teto de espera por operação de cache  |
 | `REDIS_TTL_SECONDS` | `86400`                    | Validade de cada CEP no cache (24h)   |
+| `RATE_LIMIT_MAX`    | `60`                       | Requisições por IP na janela          |
+| `RATE_LIMIT_WINDOW_MS` | `60000`                 | Tamanho da janela do rate limit       |
+| `CORS_ORIGIN`       | `*`                        | Origens liberadas, separadas por vírgula |
+| `TRUST_PROXY`       | —                          | Ligue só atrás de proxy (ex.: `1`)    |
 
 ## Cache
 
@@ -66,6 +70,36 @@ O Redis é um acelerador, não uma dependência:
 O header `X-Cache: HIT | MISS` em `GET /cep/:cep` mostra a origem dos dados, e o
 `/health` reporta o estado da conexão.
 
+## CORS e rate limit
+
+**CORS** libera qualquer origem por padrão (`CORS_ORIGIN=*`), com os métodos
+`GET` e `DELETE`. Para restringir:
+
+```bash
+CORS_ORIGIN=https://meusite.com,https://app.meusite.com
+```
+
+**Rate limit** de 60 requisições por IP por minuto, só em `/cep` — o `/health`
+fica de fora, porque health check de orquestrador bate com frequência. A resposta
+traz os headers do draft-7 do IETF:
+
+```
+RateLimit: limit=60, remaining=59, reset=60
+RateLimit-Policy: 60;w=60
+```
+
+Estourando a cota, o 429 sai no mesmo formato dos outros erros da API, e não no
+texto puro que a biblioteca manda por padrão:
+
+```json
+{ "error": { "code": "rate_limit_exceeded", "message": "Limite de 60 requisições a cada 60s excedido. Tente de novo em instantes." } }
+```
+
+> **Atrás de proxy:** sem `TRUST_PROXY`, o `req.ip` é o do proxy e todos os
+> clientes dividem o mesmo balde — o limite estoura para todo mundo de uma vez.
+> Ligue a variável só quando houver mesmo um proxy na frente; ligada sem proxy,
+> qualquer um forja o `X-Forwarded-For` e escapa do limite.
+
 ## Estrutura
 
 ```
@@ -89,6 +123,7 @@ consulta-cep/
         ├── cep.js              # sanitizar / validar / formatar CEP
         ├── env.js              # carrega o .env antes dos demais módulos
         ├── errorHandler.js     # middlewares de 404 e de erro
+        ├── rateLimiter.js       # limite por IP, no formato de erro da API
         └── redis.js            # client do cache, tolerante a falha
 ```
 
@@ -157,6 +192,7 @@ Todo erro segue o mesmo formato:
 | 400    | `invalid_cep`          | CEP não tem 8 dígitos               |
 | 404    | `cep_not_found`        | CEP válido, mas inexistente         |
 | 404    | `route_not_found`      | Rota inexistente                    |
+| 429    | `rate_limit_exceeded`  | Excedeu o limite de requisições     |
 | 502    | `upstream_unavailable` | Falha de rede ao chamar o ViaCEP    |
 | 502    | `upstream_error`       | ViaCEP respondeu com status de erro |
 | 504    | `upstream_timeout`     | ViaCEP não respondeu a tempo        |
@@ -181,6 +217,7 @@ falam o protocolo de verdade, então o código exercitado é o mesmo de produç�
 | `viacep.service.test.js`    | cada erro do upstream: 404, 400, 502, 504, JSON ruim |
 | `cep.service.test.js`       | MISS → HIT, TTL de 24h, invalidação, payload cru    |
 | `cache-offline.test.js`     | Redis fora: a API continua respondendo              |
+| `app.test.js`               | CORS, rate limit e o contrato de erro HTTP          |
 
 Os módulos leem `process.env` no topo, então os testes montam o ambiente e usam
 `import()` dinâmico. Cada arquivo roda em processo próprio, o que permite a um
