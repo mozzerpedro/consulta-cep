@@ -17,6 +17,22 @@ export const PAYLOAD_CURITIBA = {
   siafi: '7535',
 };
 
+export const PAYLOAD_PUC = {
+  cep: '80215-901',
+  logradouro: 'Rua Imaculada Conceição 1155',
+  complemento: '',
+  unidade: 'Pontifícia Universidade Católica do Paraná',
+  bairro: 'Prado Velho',
+  localidade: 'Curitiba',
+  uf: 'PR',
+  estado: 'Paraná',
+  regiao: 'Sul',
+  ibge: '4106902',
+  gia: '',
+  ddd: '41',
+  siafi: '7535',
+};
+
 /**
  * Sobe um ViaCEP falso numa porta efêmera. Cada CEP dispara um cenário:
  *

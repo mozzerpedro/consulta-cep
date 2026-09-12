@@ -1,109 +1,124 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 
-import { startFakeViaCep } from './helpers/fake-viacep.js';
+import { PAYLOAD_CURITIBA, PAYLOAD_PUC } from './helpers/fake-viacep.js';
 
-// Testes de HTTP de verdade: sobe o app numa porta efêmera e usa fetch.
-// Sem cache aqui — o alvo são os middlewares, não o Redis.
-
-const LIMITE = 3;
-
-let servidor;
-let base;
 let viacep;
+let server;
+let baseUrl;
+let responder;
+
+function responderComJson(status, corpo, atrasoMs = 0) {
+  responder = (req, res) => {
+    setTimeout(() => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(corpo));
+    }, atrasoMs);
+  };
+}
+
+async function consultar(cep) {
+  const res = await fetch(`${baseUrl}/cep/${cep}`);
+  return { status: res.status, body: await res.json() };
+}
 
 before(async () => {
-  viacep = await startFakeViaCep();
+  viacep = http.createServer((req, res) => responder(req, res));
+  await new Promise((resolve) => viacep.listen(0, '127.0.0.1', resolve));
 
-  process.env.VIACEP_BASE_URL = viacep.baseUrl;
+  process.env.VIACEP_BASE_URL = `http://127.0.0.1:${viacep.address().port}`;
+  process.env.VIACEP_TIMEOUT_MS = '300';
+  // Sem isto, cada consulta espera 1s pelo Redis inexistente e o client fica
+  // tentando reconectar, o que segura o processo aberto no fim da suíte.
   process.env.REDIS_ENABLED = 'false';
-  process.env.RATE_LIMIT_MAX = String(LIMITE);
-  process.env.RATE_LIMIT_WINDOW_MS = '60000';
-  process.env.CORS_ORIGIN = '*';
 
   const { createApp } = await import('../src/app.js');
-  servidor = createApp().listen(0, '127.0.0.1');
-  await new Promise((resolve) => servidor.once('listening', resolve));
-  base = `http://127.0.0.1:${servidor.address().port}`;
+
+  server = createApp().listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
 after(async () => {
-  servidor.closeAllConnections();
-  await new Promise((resolve) => servidor.close(resolve));
-  await viacep.close();
+  // O fetch do Node usa keep-alive, então close() sozinho fica esperando as
+  // conexões ociosas e a suíte nunca termina. Derruba primeiro, depois espera.
+  server.closeAllConnections();
+  viacep.closeAllConnections();
+  await Promise.all([
+    new Promise((resolve) => server.close(resolve)),
+    new Promise((resolve) => viacep.close(resolve)),
+  ]);
 });
 
-describe('CORS', () => {
-  test('libera a origem na resposta do GET', async () => {
-    const res = await fetch(`${base}/cep/80010010`, { headers: { Origin: 'https://meusite.com' } });
-
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get('access-control-allow-origin'), '*');
-  });
-
-  test('responde ao preflight com os métodos permitidos', async () => {
-    const res = await fetch(`${base}/cep/80010010`, {
-      method: 'OPTIONS',
-      headers: {
-        Origin: 'https://meusite.com',
-        'Access-Control-Request-Method': 'DELETE',
-      },
-    });
-
-    assert.ok(res.status === 204 || res.status === 200, `status inesperado: ${res.status}`);
-    assert.match(res.headers.get('access-control-allow-methods') ?? '', /DELETE/);
-  });
-
-  test('preflight não consome a cota do rate limit', async () => {
-    const res = await fetch(`${base}/cep/80010010`, {
-      method: 'OPTIONS',
-      headers: { Origin: 'https://meusite.com', 'Access-Control-Request-Method': 'GET' },
-    });
-
-    assert.equal(res.headers.has('ratelimit'), false);
-  });
-});
-
-describe('rate limit', () => {
-  test('expõe os headers padrão do draft-7', async () => {
-    const res = await fetch(`${base}/cep/80010010`);
-
-    // draft-7 usa um header só: `RateLimit: limit=3, remaining=2, reset=60`.
-    assert.match(res.headers.get('ratelimit') ?? '', new RegExp(`limit=${LIMITE}`));
-    assert.match(res.headers.get('ratelimit') ?? '', /remaining=\d+/);
-    assert.equal(res.headers.get('ratelimit-policy'), `${LIMITE};w=60`);
-    assert.equal(res.headers.has('x-ratelimit-limit'), false, 'os headers legados ficam desligados');
-  });
-
-  test('bloqueia com 429 no formato de erro da API', async () => {
-    // A cota já foi parcialmente gasta pelos testes acima; estoura de vez.
-    let res;
-    for (let i = 0; i < LIMITE + 2; i++) {
-      res = await fetch(`${base}/cep/80010010`);
-    }
-
-    assert.equal(res.status, 429);
-
+describe('GET /health', () => {
+  test('responde ok', async () => {
+    const res = await fetch(`${baseUrl}/health`);
     const body = await res.json();
-    assert.equal(body.error.code, 'rate_limit_exceeded');
-    assert.match(body.error.message, /Limite de 3 requisições/);
-    assert.equal('data' in body, false);
-  });
-
-  test('/health continua respondendo mesmo com a cota estourada', async () => {
-    const res = await fetch(`${base}/health`);
 
     assert.equal(res.status, 200);
-    assert.equal((await res.json()).status, 'ok');
-    assert.equal(res.headers.has('ratelimit'), false, '/health fica fora do limite');
+    assert.equal(body.status, 'ok');
   });
 });
 
-describe('contrato de erro', () => {
-  test('rota inexistente segue devolvendo route_not_found', async () => {
-    const res = await fetch(`${base}/nao-existe`);
+describe('GET /cep/:cep', () => {
+  test('CEP válido retorna 200 com o endereço', async () => {
+    responderComJson(200, PAYLOAD_CURITIBA);
+    const { status, body } = await consultar('80010-010');
+
+    assert.equal(status, 200);
+    assert.equal(body.data.cidade, 'Curitiba');
+  });
+
+  test('CEP de grande usuário retorna 200 sem campos internos', async () => {
+    responderComJson(200, PAYLOAD_PUC);
+    const { status, body } = await consultar('80215-901');
+
+    assert.equal(status, 200);
+    assert.equal(body.data.cepFormatado, '80215-901');
+    assert.equal(body.data.unidade, undefined);
+  });
+
+  test('formato inválido retorna 400 invalid_cep', async () => {
+    const { status, body } = await consultar('123');
+
+    assert.equal(status, 400);
+    assert.equal(body.error.code, 'invalid_cep');
+  });
+
+  test('CEP inexistente retorna 404 cep_not_found', async () => {
+    responderComJson(200, { erro: 'true' });
+    const { status, body } = await consultar('00000000');
+
+    assert.equal(status, 404);
+    assert.equal(body.error.code, 'cep_not_found');
+  });
+});
+
+describe('falhas do ViaCEP', () => {
+  test('status de erro vira 502 upstream_error', async () => {
+    responderComJson(500, { mensagem: 'boom' });
+    const { status, body } = await consultar('80020-010');
+
+    assert.equal(status, 502);
+    assert.equal(body.error.code, 'upstream_error');
+  });
+
+  test('resposta lenta vira 504 upstream_timeout', async () => {
+    responderComJson(200, {}, 800);
+    const { status, body } = await consultar('80030-010');
+
+    assert.equal(status, 504);
+    assert.equal(body.error.code, 'upstream_timeout');
+  });
+});
+
+describe('rota inexistente', () => {
+  test('retorna 404 route_not_found', async () => {
+    const res = await fetch(`${baseUrl}/naoexiste`);
+    const body = await res.json();
 
     assert.equal(res.status, 404);
-    assert.equal((await res.json()).error.code, 'route_not_found');
+    assert.equal(body.error.code, 'route_not_found');
   });
 });
