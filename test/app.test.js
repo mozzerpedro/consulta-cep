@@ -29,17 +29,26 @@ before(async () => {
 
   process.env.VIACEP_BASE_URL = `http://127.0.0.1:${viacep.address().port}`;
   process.env.VIACEP_TIMEOUT_MS = '300';
+  // Sem isto, cada consulta espera 1s pelo Redis inexistente e o client fica
+  // tentando reconectar, o que segura o processo aberto no fim da suíte.
+  process.env.REDIS_ENABLED = 'false';
 
-  const { default: app } = await import('../src/app.js');
+  const { createApp } = await import('../src/app.js');
 
-  server = app.listen(0);
+  server = createApp().listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
-after(() => {
-  server.close();
-  viacep.close();
+after(async () => {
+  // O fetch do Node usa keep-alive, então close() sozinho fica esperando as
+  // conexões ociosas e a suíte nunca termina. Derruba primeiro, depois espera.
+  server.closeAllConnections();
+  viacep.closeAllConnections();
+  await Promise.all([
+    new Promise((resolve) => server.close(resolve)),
+    new Promise((resolve) => viacep.close(resolve)),
+  ]);
 });
 
 describe('GET /health', () => {
