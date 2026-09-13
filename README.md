@@ -39,6 +39,32 @@ Variáveis de ambiente (todas opcionais, ver `.env.example`):
 | `CORS_ORIGIN`       | `*`                        | Origens liberadas, separadas por vírgula |
 | `TRUST_PROXY`       | —                          | Ligue só atrás de proxy (ex.: `1`)    |
 
+## Docker
+
+A imagem usa `node:trixie-slim`, instala só as dependências de produção e roda
+como o usuário `node`, sem root.
+
+```bash
+docker build -t consulta-cep .
+docker run -p 3000:3000 consulta-cep
+```
+
+Com cache, Redis e API na mesma rede:
+
+```bash
+docker network create cep-net
+docker run -d --name redis --network cep-net redis:7-alpine
+docker run -p 3000:3000 --network cep-net -e REDIS_URL=redis://redis:6379 consulta-cep
+```
+
+> **`REDIS_URL` dentro do container:** o padrão `redis://127.0.0.1:6379` aponta
+> para o próprio container, não para a sua máquina. Sem configurar a variável a
+> API sobe normalmente, mas sem cache — o `/health` mostra `"redis": "unavailable"`.
+
+A configuração vem por `-e` / `--env-file`: o `.env` fica fora da imagem pelo
+`.dockerignore`. O container tem `HEALTHCHECK` no `/health` e trata o `SIGTERM`,
+então `docker stop` encerra na hora, fechando HTTP e Redis.
+
 ## Cache
 
 O CEP é consultado no Redis antes de ir ao ViaCEP. Em um HIT a API nem toca na
@@ -106,7 +132,9 @@ texto puro que a biblioteca manda por padrão:
 consulta-cep/
 ├── .env
 ├── .env.example
+├── .dockerignore
 ├── .gitignore
+├── Dockerfile
 ├── package.json
 ├── README.md
 ├── test/                       # suíte com node:test
