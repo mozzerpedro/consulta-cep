@@ -1,0 +1,23 @@
+name: Continuous Delivery
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+    delivery:
+        name: Delivery
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Continuous Delivery
+              uses: actions/upload-artifact@v7
+              with:
+                name: projeto
+                path: |
+                  **.js
+                  readme.md
+                  !test/
